@@ -12,17 +12,6 @@ class BaseNanoVNA(ABC):
     @abstractmethod
     async def acquire_segment(self,start,stop,points): ...
 
-class MockNanoVNA(BaseNanoVNA):
-    def __init__(self,fail_after=None): self.connected=False; self.count=0; self.fail_after=fail_after; self.info={"device":"Mock NanoVNA","firmware":"test-1.0"}
-    async def connect(self): self.connected=True; return self.info
-    async def disconnect(self): self.connected=False
-    async def acquire_segment(self,start,stop,points):
-        if not self.connected: raise DeviceError("Device is not connected")
-        self.count+=1
-        if self.fail_after and self.count>=self.fail_after: self.connected=False; raise DeviceError("Simulated USB disconnection")
-        f=np.linspace(start,stop,points); x=(f-1.5e9)/1.5e9; s21=(.035+.006*np.sin(10*x))*np.exp(-1j*(1+8*x)); s11=.1*np.exp(1j*4*x)
-        await asyncio.sleep(0); return f,s11,s21
-
 class SerialNanoVNA(BaseNanoVNA):
     def __init__(self,port,baudrate=115200,timeout=3,protocol=None): self.port=port; self.baudrate=baudrate; self.timeout=timeout; self.protocol=protocol or NanoVNAProtocol(); self.serial=None; self.info={}
     async def _command(self,cmd):

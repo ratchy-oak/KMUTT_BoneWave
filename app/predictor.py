@@ -1,4 +1,4 @@
-"""Three-class real and live reference-bank prediction."""
+"""Three-class prediction against the recorded real dataset."""
 from hashlib import sha256
 from pathlib import Path
 
@@ -36,10 +36,6 @@ class Predictor:
             kind: self._bank_radius(self.reference_bank[kind]) for kind in CLASS_KEYS
         }
 
-        self.live_reference_dir = ROOT / "data" / "live_references"
-        self.live_reference_bank = {kind: np.empty((0, 0)) for kind in CLASS_KEYS}
-        self._load_live_reference_bank()
-
     def _load_real_reference_bank(self):
         """Load unique real sweeps captured at multiple angles."""
         for kind in CLASS_KEYS:
@@ -66,30 +62,6 @@ class Predictor:
                 else np.empty((0, 0), dtype=float)
             )
 
-    def _load_live_reference_bank(self):
-        for kind in CLASS_KEYS:
-            folder = self.live_reference_dir / kind
-            traces = []
-            for path in sorted(folder.glob("*.s2p")) if folder.exists() else []:
-                try:
-                    traces.append(self._smooth_magnitude(load_standard_trace(path)))
-                except Exception:
-                    continue
-            self.live_reference_bank[kind] = (
-                np.stack(traces) if traces else np.empty((0, 0), dtype=float)
-            )
-
-    def set_live_reference_bank(self, kind, traces):
-        if kind not in CLASS_KEYS:
-            raise ValueError("Reference kind must be air, normal, or crack")
-        values = [self._smooth_magnitude(trace) for trace in traces]
-        if len(values) < 3:
-            raise ValueError("At least three completed sweeps are required")
-        self.live_reference_bank[kind] = np.stack(values)
-
-    def clear_live_references(self):
-        self.live_reference_bank = {kind: np.empty((0, 0)) for kind in CLASS_KEYS}
-
     @staticmethod
     def _smooth_magnitude(trace):
         return np.convolve(trace.s21_db, np.ones(7) / 7, mode="same")[3:-3]
@@ -114,18 +86,11 @@ class Predictor:
 
     def reference_status(self):
         real_counts = {kind: len(bank) for kind, bank in self.reference_bank.items()}
-        live_counts = {
-            kind: len(bank) for kind, bank in self.live_reference_bank.items()
-        }
-        live_ready = all(live_counts[kind] >= 3 for kind in CLASS_KEYS)
         return {
-            "ready": live_ready,
-            "live_ready": live_ready,
-            "source": "live_setup" if live_ready else "real_multi_angle_fallback",
+            "ready": True,
+            "source": "real_multi_angle_dataset",
             "classes": [CLASS_LABELS[kind] for kind in CLASS_KEYS],
             "reference_counts": real_counts,
-            "live_reference_counts": live_counts,
-            "captured": {kind: live_counts[kind] >= 3 for kind in CLASS_KEYS},
             "ignored_exact_duplicates": sum(
                 len(items) for items in self.reference_duplicates.values()
             ),
@@ -221,39 +186,5 @@ class Predictor:
             "Same-specimen, multi-angle reference matching only",
         )
 
-    def _predict_live(self, sample):
-        distances = {
-            kind: self._bank_distance(sample, self.live_reference_bank[kind], k=3)
-            for kind in CLASS_KEYS
-        }
-        centers = [np.mean(self.live_reference_bank[kind], axis=0) for kind in CLASS_KEYS]
-        separations = [
-            float(np.sqrt(np.mean((centers[left] - centers[right]) ** 2)))
-            for left, right in ((0, 1), (0, 2), (1, 2))
-        ]
-        typical_separation = float(np.median(separations))
-        temperature = max(0.2, typical_separation / 3)
-        raw = np.asarray([distances[kind] for kind in CLASS_KEYS])
-        probabilities = self._probabilities(raw, temperature)
-        outlier_threshold = max(3.0, max(separations) * 2)
-        winner_index = int(np.argmax(probabilities))
-        outlier = bool(raw[winner_index] > outlier_threshold)
-        decision_values = raw / (outlier_threshold + 1e-9)
-        return self._result(
-            distances,
-            decision_values,
-            probabilities,
-            outlier,
-            "live_three_class_reference_bank",
-            "live_nanovna_three_class",
-            {kind: len(bank) for kind, bank in self.live_reference_bank.items()},
-            "Current NanoVNA and fixture live-reference matching",
-            separation_warning=min(separations) < 0.1,
-            allow_uncertain=False,
-        )
-
-    def predict(self, trace, prefer_live=False):
-        sample = self._smooth_magnitude(trace)
-        if prefer_live and self.reference_status()["live_ready"]:
-            return self._predict_live(sample)
-        return self._predict_real(sample)
+    def predict(self, trace):
+        return self._predict_real(self._smooth_magnitude(trace))

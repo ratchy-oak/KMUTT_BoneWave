@@ -1,40 +1,15 @@
 const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
 
 let ws;
 let completedSweeps = 0;
 let latestCompletedResult = null;
-let pendingReferenceKind = null;
-let setupBusy = false;
-let referenceStatus = null;
-let hiddenScan = null;
-let backMouseHeld = false;
-let backMouseArmed = false;
-
 const ui = {
   connect: $('#connect'),
   disconnect: $('#disconnect'),
   start: $('#start'),
   stop: $('#stop'),
   badge: $('#connectionBadge'),
-  setupDialog: $('#setupDialog'),
-  setupButton: $('#openSetup'),
 };
-
-const referenceNames = {
-  air: 'Air',
-  normal: 'Known normal',
-  crack: 'Known crack',
-};
-
-function keepBoneWaveOpen() {
-  const guard = {boneWaveHistoryGuard: true};
-  history.replaceState(guard, '', location.href);
-  history.pushState(guard, '', location.href);
-  window.addEventListener('popstate', () => {
-    history.pushState(guard, '', location.href);
-  });
-}
 
 async function api(url, options = {}) {
   const response = await fetch(url, options);
@@ -59,23 +34,14 @@ function isScanning() {
   return document.body.classList.contains('scanning');
 }
 
-function updateSetupButtons() {
-  const disabled = !isConnected() || isScanning() || setupBusy;
-  $$('.setup-capture').forEach((button) => {
-    button.disabled = disabled;
-  });
-  $('#resetSetup').disabled = isScanning() || setupBusy;
-}
-
 function setConnected(connected) {
   ui.badge.classList.toggle('online', connected);
   ui.badge.classList.toggle('offline', !connected);
   $('#connection').textContent = connected ? 'Connected' : 'Disconnected';
-  ui.connect.disabled = connected;
+  ui.connect.disabled = connected || !$('#ports').value;
   ui.disconnect.disabled = !connected;
   ui.start.disabled = !connected || isScanning();
   ui.stop.disabled = true;
-  updateSetupButtons();
 }
 
 function setScanning(scanning) {
@@ -83,15 +49,6 @@ function setScanning(scanning) {
   $('#measurement').textContent = scanning ? 'Measuring' : 'Idle';
   ui.start.disabled = scanning || !isConnected();
   ui.stop.disabled = !scanning;
-  updateSetupButtons();
-}
-
-function setSetupActivity(message, state = '') {
-  const activity = $('#setupActivity');
-  if (!activity) return;
-  activity.classList.remove('active', 'success', 'error');
-  if (state) activity.classList.add(state);
-  activity.querySelector('span').textContent = message;
 }
 
 function showScanLoading(completed = 0) {
@@ -110,160 +67,16 @@ function hideScanLoading() {
   $('#resultPanel').classList.remove('state-loading');
 }
 
-function setSetupBusy(kind = null) {
-  setupBusy = Boolean(kind);
-  $$('.setup-item').forEach((item) => {
-    item.classList.toggle('capturing', item.dataset.setupItem === kind);
-  });
-  if (kind) {
-    setSetupActivity(`Scanning ${referenceNames[kind]}… Keep the fixture unchanged.`, 'active');
-  }
-  updateSetupButtons();
-}
-
-function randomSimilarity(minimum, maximum) {
-  return Math.round((minimum + Math.random() * (maximum - minimum)) * 1000) / 1000;
-}
-
-function makeHiddenSimilarities(label) {
-  if (label === 'AIR') {
-    return {
-      AIR: randomSimilarity(0.91, 0.98),
-      NOT_FRACTURED: randomSimilarity(0.18, 0.48),
-      FRACTURED: randomSimilarity(0.12, 0.40),
-    };
-  }
-  if (label === 'NOT_FRACTURED') {
-    return {
-      AIR: randomSimilarity(0.15, 0.42),
-      NOT_FRACTURED: randomSimilarity(0.88, 0.97),
-      FRACTURED: randomSimilarity(0.45, 0.78),
-    };
-  }
-  return {
-    AIR: randomSimilarity(0.12, 0.38),
-    NOT_FRACTURED: randomSimilarity(0.50, 0.82),
-    FRACTURED: randomSimilarity(0.88, 0.97),
-  };
-}
-
-function cancelHiddenScan() {
-  hiddenScan = null;
-  document.body.classList.remove('hidden-scanning');
-}
-
-function makeHiddenResult(run) {
-  const similarities = run.similarities;
-  return {
-    ...(run.latest || {}),
-    frequency_hz: run.trace.frequency_hz,
-    s21_db: run.trace.s21_db,
-    timestamp: new Date().toISOString(),
-    prediction: run.label,
-    predicted_class: run.label,
-    class_probabilities: {...similarities},
-    fracture_probability: similarities.FRACTURED,
-    confidence: similarities[run.label],
-    similarity_air: similarities.AIR,
-    similarity_normal: similarities.NOT_FRACTURED,
-    similarity_crack: similarities.FRACTURED,
-    model_mode: 'hidden_shortcut_three_sweep',
-    hidden_source_file: run.trace.source_file,
-    completed_sweeps: completedSweeps,
-  };
-}
-
-function finishHiddenScan(run) {
-  if (hiddenScan !== run) return;
-  const result = makeHiddenResult(run);
-  hiddenScan = null;
-  document.body.classList.remove('hidden-scanning');
-  showResult(result);
-  setScanning(false);
-  $('#measurement').textContent = 'Complete';
-  $('#scanMessage').textContent = `Sweep ${completedSweeps || 1} stabilized and processed`;
-  $('#timestamp').textContent = new Date(result.timestamp).toLocaleString();
-  $('#status').textContent = 'Complete';
-}
-
-async function startHiddenScan(label) {
-  if (!isConnected()) {
-    alert('Connect the NanoVNA before starting a scan.');
-    return;
-  }
-  const run = {
-    label,
-    similarities: makeHiddenSimilarities(label),
-    trace: null,
-    latest: null,
-  };
-  hiddenScan = run;
-  latestCompletedResult = null;
-  completedSweeps = 0;
-  showScanLoading();
-  clearChart();
-  document.body.classList.add('hidden-scanning');
-  pendingReferenceKind = null;
-  try {
-    run.trace = await api(`/api/hidden/trace/${encodeURIComponent(label)}`);
-    if (hiddenScan !== run) return;
-    const data = await post('/api/live/start?fast=true');
-    if (hiddenScan !== run) return;
-    completedSweeps = 0;
-    setScanning(true);
-    $('#source').textContent = data.session_id;
-    $('#scanMessage').textContent = 'Acquiring and averaging S21 sweep…';
-    $('#status').textContent = 'Measuring';
-  } catch (error) {
-    if (hiddenScan === run) cancelHiddenScan();
-    hideScanLoading();
-    setScanning(false);
-    alert(error.message);
-  }
-}
-
-async function loadReferences() {
-  try {
-    referenceStatus = await api('/api/live/references');
-    const captured = referenceStatus.captured || {};
-    const count = ['air', 'normal', 'crack'].filter((kind) => captured[kind]).length;
-
-    for (const kind of ['air', 'normal', 'crack']) {
-      const saved = Boolean(captured[kind]);
-      const item = $(`[data-setup-item="${kind}"]`);
-      const state = $(`#${kind}SetupState`);
-      item.classList.toggle('captured', saved);
-      state.classList.toggle('saved', saved);
-      state.textContent = saved ? 'Saved' : 'Missing';
-    }
-
-    $('#setupProgressText').textContent = `${count} of 3 captured`;
-    $('#setupProgressBar').style.width = `${(count / 3) * 100}%`;
-    $('#setupReadyText').textContent = referenceStatus.live_ready
-      ? 'Ready for live prediction'
-      : 'Setup required';
-    $('#setupBadge').textContent = referenceStatus.live_ready ? 'Ready' : `${count}/3`;
-    ui.setupButton.classList.toggle('ready', referenceStatus.live_ready);
-
-    if (!setupBusy) {
-      setSetupActivity(
-        referenceStatus.live_ready
-          ? 'Live references are ready. You can scan unknown samples.'
-          : 'Connect the NanoVNA, then capture each reference.',
-        referenceStatus.live_ready ? 'success' : '',
-      );
-    }
-  } catch (error) {
-    setSetupActivity(error.message, 'error');
-  }
-}
-
 async function scanPorts() {
   try {
     const data = await api('/api/device/ports');
-    $('#ports').innerHTML = data.ports.map((port) => (
-      `<option value="${port.port}">${port.port} — ${port.description}${port.protocol === 'nanovna_v2' ? ' · NanoVNA V2' : ''}</option>`
-    )).join('') || '<option>No serial devices found</option>';
+    const select = $('#ports');
+    select.replaceChildren(...data.ports.map((port) => new Option(
+      `${port.port} — ${port.description}${port.protocol === 'nanovna_v2' ? ' · NanoVNA V2' : ''}`,
+      port.port,
+    )));
+    if (!data.ports.length) select.add(new Option('No serial devices found', ''));
+    ui.connect.disabled = isConnected() || !select.value;
   } catch (error) {
     $('#status').textContent = error.message;
   }
@@ -327,11 +140,6 @@ function showResult(result) {
   if (result.frequency_hz) draw(result.s21_db);
 }
 
-function clearChart() {
-  const canvas = $('#chart');
-  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-}
-
 function draw(values) {
   const canvas = $('#chart');
   const ctx = canvas.getContext('2d');
@@ -373,45 +181,23 @@ function draw(values) {
   ctx.shadowBlur = 0;
 }
 
-async function startScan(referenceKind = null) {
+async function startScan() {
   if (!isConnected()) {
     const message = 'Connect the NanoVNA before starting a scan.';
-    if (referenceKind) setSetupActivity(message, 'error'); else alert(message);
+    alert(message);
     return;
   }
   try {
-    pendingReferenceKind = referenceKind;
     latestCompletedResult = null;
     completedSweeps = 0;
     showScanLoading();
-    setSetupBusy(referenceKind);
-    const data = await post('/api/live/start');
+    await post('/api/live/start');
     completedSweeps = 0;
     setScanning(true);
-    $('#source').textContent = data.session_id;
-    $('#scanMessage').textContent = referenceKind
-      ? `Capturing ${referenceNames[referenceKind]} reference…`
-      : 'Starting segmented sweep…';
+    $('#scanMessage').textContent = 'Starting segmented sweep…';
   } catch (error) {
-    pendingReferenceKind = null;
-    setSetupBusy(null);
     hideScanLoading();
-    if (referenceKind) setSetupActivity(error.message, 'error'); else alert(error.message);
-  }
-}
-
-async function finishReferenceCapture() {
-  const kind = pendingReferenceKind;
-  if (!kind) return;
-  pendingReferenceKind = null;
-  try {
-    await post(`/api/live/reference/${kind}`);
-    await loadReferences();
-    setSetupActivity(`${referenceNames[kind]} reference saved successfully.`, 'success');
-  } catch (error) {
-    setSetupActivity(error.message, 'error');
-  } finally {
-    setSetupBusy(null);
+    alert(error.message);
   }
 }
 
@@ -426,11 +212,6 @@ function openSocket() {
         setScanning(true);
         showScanLoading(3);
         await new Promise((resolve) => setTimeout(resolve, 300));
-        if (hiddenScan) {
-          finishHiddenScan(hiddenScan);
-          return;
-        }
-        if (pendingReferenceKind) await finishReferenceCapture();
         if (latestCompletedResult) showResult(latestCompletedResult);
         setScanning(false);
         $('#measurement').textContent = 'Complete';
@@ -438,39 +219,27 @@ function openSocket() {
         $('#status').textContent = 'Complete';
         return;
       }
-      setScanning(hiddenScan ? true : data.device.running);
+      setScanning(data.device.running);
       return;
     }
     if (data.status === 'measuring') {
       $('#measurement').textContent = 'Measuring';
-      $('#scanMessage').textContent = pendingReferenceKind
-          ? `Capturing ${referenceNames[pendingReferenceKind]} reference…`
-          : 'Acquiring and averaging S21 sweep…';
+      $('#scanMessage').textContent = 'Acquiring and averaging S21 sweep…';
       setScanning(true);
     } else if (data.status === 'complete') {
       completedSweeps = data.completed_sweeps || 0;
       latestCompletedResult = data;
       showScanLoading(completedSweeps);
-      if (hiddenScan) {
-        hiddenScan.latest = data;
-        $('#timestamp').textContent = new Date(data.timestamp).toLocaleString();
-        $('#status').textContent = 'Measuring';
-        return;
-      }
       $('#measurement').textContent = 'Measuring';
       $('#scanMessage').textContent = `Sweep ${completedSweeps}/3 completed`;
       $('#timestamp').textContent = new Date(data.timestamp).toLocaleString();
-      $('#status').textContent = pendingReferenceKind ? 'Capturing reference' : 'Measuring';
+      $('#status').textContent = 'Measuring';
       if (data.frequency_hz) draw(data.s21_db);
     } else if (data.status === 'error') {
-      cancelHiddenScan();
-      pendingReferenceKind = null;
-      setSetupBusy(null);
       hideScanLoading();
       $('#measurement').textContent = 'Error';
       $('#scanMessage').textContent = data.error;
       $('#status').textContent = data.error;
-      setSetupActivity(data.error, 'error');
       setScanning(false);
     }
   };
@@ -485,11 +254,10 @@ $('#rescan').onclick = scanPorts;
 ui.connect.onclick = async () => {
   try {
     const port = $('#ports').value;
-    await post('/api/device/connect', {port, mock: port === 'MOCK'});
+    await post('/api/device/connect', {port});
     setConnected(true);
     $('#scanMessage').textContent = 'NanoVNA ready — start a live scan';
     $('#status').textContent = 'Device ready';
-    setSetupActivity('Device connected. Capture Air, Known normal, and Known crack.', '');
   } catch (error) {
     setConnected(false);
     alert(error.message);
@@ -498,10 +266,7 @@ ui.connect.onclick = async () => {
 
 ui.disconnect.onclick = async () => {
   try {
-    cancelHiddenScan();
     await post('/api/device/disconnect');
-    pendingReferenceKind = null;
-    setSetupBusy(null);
     setConnected(false);
     setScanning(false);
     hideScanLoading();
@@ -511,101 +276,19 @@ ui.disconnect.onclick = async () => {
   }
 };
 
-ui.start.onclick = (event) => {
-  if (backMouseHeld) backMouseArmed = false;
-  if (event.shiftKey) {
-    event.preventDefault();
-    event.stopPropagation();
-    startHiddenScan('AIR');
-    return;
-  }
-  startScan();
-};
-
-ui.start.addEventListener('mousedown', (event) => {
-  if (event.button === 3) {
-    event.preventDefault();
-    event.stopPropagation();
-    backMouseHeld = true;
-    backMouseArmed = true;
-  } else if (event.button === 4) {
-    event.preventDefault();
-    event.stopPropagation();
-    startHiddenScan('FRACTURED');
-  }
-});
-
-window.addEventListener('mouseup', (event) => {
-  if (event.button === 3) {
-    event.preventDefault();
-    event.stopPropagation();
-    const shouldScanNormal = backMouseHeld && backMouseArmed;
-    backMouseHeld = false;
-    backMouseArmed = false;
-    if (shouldScanNormal) startHiddenScan('NOT_FRACTURED');
-  } else if (event.button === 4) {
-    event.preventDefault();
-    event.stopPropagation();
-  }
-}, true);
-
-window.addEventListener('auxclick', (event) => {
-  if (event.button === 3 || event.button === 4) {
-    event.preventDefault();
-    event.stopPropagation();
-  }
-}, true);
+ui.start.onclick = () => startScan();
 
 ui.stop.onclick = async () => {
-  const stoppedReference = pendingReferenceKind;
   try {
-    cancelHiddenScan();
     await post('/api/live/stop');
-    pendingReferenceKind = null;
-    setSetupBusy(null);
     setScanning(false);
     hideScanLoading();
     $('#scanMessage').textContent = 'Scan stopped — change the sample or start again';
-    if (stoppedReference) {
-      setSetupActivity('Reference capture stopped. Nothing was saved.', 'error');
-    }
   } catch (error) {
     alert(error.message);
   }
 };
 
-ui.setupButton.onclick = async () => {
-  await loadReferences();
-  ui.setupDialog.showModal();
-};
-
-$('#closeSetup').onclick = () => ui.setupDialog.close();
-ui.setupDialog.addEventListener('click', (event) => {
-  if (event.target === ui.setupDialog) ui.setupDialog.close();
-});
-
-$$('.setup-capture').forEach((button) => {
-  button.onclick = () => startScan(button.dataset.setupKind);
-});
-
-$('#resetSetup').onclick = async () => {
-  if (!confirm('Reset all live Air, Normal, and Crack references? Your real dataset will not be deleted.')) return;
-  try {
-    setupBusy = true;
-    updateSetupButtons();
-    await post('/api/live/references/reset');
-    await loadReferences();
-    setSetupActivity('Live setup reset. Your real dataset is unchanged.', 'success');
-  } catch (error) {
-    setSetupActivity(error.message, 'error');
-  } finally {
-    setupBusy = false;
-    updateSetupButtons();
-  }
-};
-
 setConnected(false);
-keepBoneWaveOpen();
 scanPorts();
-loadReferences();
 openSocket();

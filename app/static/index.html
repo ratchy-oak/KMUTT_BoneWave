@@ -6,13 +6,13 @@
   <title>BoneWave AI — Live S21 Research</title>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="/static/responsive.css">
-  <link rel="stylesheet" href="/static/theme-light.css?v=20260723-6">
+  <link rel="stylesheet" href="/static/theme-light.css?v=20261110-core">
 </head>
 <body>
   <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
   <main class="shell">
     <section class="device-card glass">
-      <div class="section-heading"><div><span class="eyebrow">NanoVNA V2</span><h2>Live acquisition</h2></div><div class="acquisition-actions"><button id="openSetup" class="setup-trigger" type="button"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 100 6 3 3 0 000-6zM5 14h14M7 14v7M17 14v7M12 14v7"/></svg><span>Setup references</span><b id="setupBadge">Setup</b></button><div id="connectionBadge" class="status-pill offline"><i></i><span id="connection">Disconnected</span></div></div></div>
+      <div class="section-heading"><div><span class="eyebrow">NanoVNA V2</span><h2>Live acquisition</h2></div><div class="acquisition-actions"><div id="connectionBadge" class="status-pill offline"><i></i><span id="connection">Disconnected</span></div></div></div>
       <div class="device-controls">
         <label class="field"><span>Serial device</span><select id="ports"><option>Scanning ports…</option></select></label>
         <button id="rescan" class="button ghost" title="Scan serial ports"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg>Rescan</button>
@@ -29,6 +29,7 @@
       <article id="resultPanel" class="result-panel glass state-idle">
         <div class="result-glow"></div>
         <span class="eyebrow">Stabilized live result</span>
+        <p class="research-note">Research prototype — Not for medical diagnosis</p>
         <div class="scan-loader" aria-live="polite"><div class="loader-orbit"><i></i></div><strong id="sweepProgress">Preparing</strong><span>Sweep progress</span></div>
         <div class="bone-stage">
           <svg class="bone-visual" viewBox="0 0 200 120" aria-label="Bone condition indicator">
@@ -45,21 +46,9 @@
 
     <section class="data-grid">
       <article class="chart-card glass"><div class="section-heading compact"><div><span class="eyebrow">Frequency response</span><h2>S21 magnitude</h2></div><div class="legend"><i></i> Live measurement</div></div><canvas id="chart" width="1000" height="320"></canvas><div class="axis-labels"><span>1.5 GHz</span><span>Frequency</span><span>3.0 GHz</span></div></article>
-      <article class="details-card glass"><div class="section-heading compact"><div><span class="eyebrow">Latest sweep</span><h2>Measurement details</h2></div></div><dl><div><dt>Session</dt><dd id="source">—</dd></div><div><dt>Air similarity</dt><dd id="air">—</dd></div><div><dt>Normal similarity</dt><dd id="normal">—</dd></div><div><dt>Crack similarity</dt><dd id="crack">—</dd></div><div><dt>Processing status</dt><dd id="status">Ready</dd></div></dl></article>
+      <article class="details-card glass"><div class="section-heading compact"><div><span class="eyebrow">Latest sweep</span><h2>Measurement details</h2></div></div><dl><div><dt>Air similarity</dt><dd id="air">—</dd></div><div><dt>Normal similarity</dt><dd id="normal">—</dd></div><div><dt>Crack similarity</dt><dd id="crack">—</dd></div><div><dt>Processing status</dt><dd id="status">Ready</dd></div></dl></article>
     </section>
   </main>
-  <dialog id="setupDialog" class="setup-dialog">
-    <div class="setup-modal">
-      <header class="setup-header"><div><span class="eyebrow">Current device calibration</span><h2>Setup live references</h2><p>Capture all three conditions with the NanoVNA and fixture you will use for scanning.</p></div><button id="closeSetup" class="icon-button" type="button" aria-label="Close setup"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
-      <div class="setup-progress"><div><span id="setupProgressText">0 of 3 captured</span><strong id="setupReadyText">Setup required</strong></div><div class="progress-track"><i id="setupProgressBar"></i></div></div>
-      <div class="setup-grid">
-        <article class="setup-item" data-setup-item="air"><div class="setup-item-icon air"><svg viewBox="0 0 42 32"><path d="M4 9h22c7 0 7-9 1-9-3 0-5 2-5 4M4 16h32c6 0 6 9 0 9-3 0-5-2-5-5M4 23h16"/></svg></div><div class="setup-item-copy"><span>Step 1</span><h3>Air</h3><p>Leave the fixture empty.</p></div><span id="airSetupState" class="setup-state">Missing</span><button class="setup-capture" data-setup-kind="air" type="button">Scan & capture</button></article>
-        <article class="setup-item" data-setup-item="normal"><div class="setup-item-icon normal"><svg viewBox="0 0 42 32"><path d="M13 8C8 3 2 7 5 13c-5 3-2 10 4 9 2 6 9 4 11 0h2c2 4 9 6 11 0 6 1 9-6 4-9 3-6-3-10-8-5l-3 4H16z"/></svg></div><div class="setup-item-copy"><span>Step 2</span><h3>Known normal</h3><p>Place the normal reference specimen.</p></div><span id="normalSetupState" class="setup-state">Missing</span><button class="setup-capture" data-setup-kind="normal" type="button">Scan & capture</button></article>
-        <article class="setup-item" data-setup-item="crack"><div class="setup-item-icon crack"><svg viewBox="0 0 42 32"><path d="M13 8C8 3 2 7 5 13c-5 3-2 10 4 9 2 6 9 4 11 0l2-4-4-4 3-2h-5zM25 12l-3 3 4 3-4 4c2 4 9 6 11 0 6 1 9-6 4-9 3-6-3-10-8-5z"/></svg></div><div class="setup-item-copy"><span>Step 3</span><h3>Known crack</h3><p>Place the cracked reference specimen.</p></div><span id="crackSetupState" class="setup-state">Missing</span><button class="setup-capture" data-setup-kind="crack" type="button">Scan & capture</button></article>
-      </div>
-      <footer class="setup-footer"><p>Each capture uses the completed sweeps from one automatic sample scan.</p><button id="resetSetup" class="reset-setup" type="button">Reset live setup</button></footer>
-    </div>
-  </dialog>
-  <script src="/static/app.js?v=20260723-13"></script>
+  <script src="/static/app.js?v=20261110-core"></script>
 </body>
 </html>
